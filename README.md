@@ -8,6 +8,7 @@ Document status: Final. Last updated: 2025-12-12.
 
 - [Overview](#overview)
 - [Quick start](#quick-start)
+- [Infrastructure](#infrastructure)
 - [Architecture & design](#architecture--design)
 - [Core flows](#core-flows)
 - [Multi-repo architecture](#multi-repo-architecture)
@@ -90,7 +91,14 @@ Swagger/OpenAPI specs available at:
 - Staging: `https://api-staging.chaufher.azure.com/swagger`
 - Production: `https://api.chaufher.azure.com/swagger`
 
-## Architecture & design
+## Infrastructure
+
+This API is deployed and managed using centralized infrastructure in: [chaufher-infra](https://github.com/phoenixvc/chaufher-infra).
+
+For API contracts, deployment guidance, and environment variables, consult:
+
+- [chaufher-infra/MOBILE_CHECKLIST.md](https://github.com/phoenixvc/chaufher-infra/blob/main/MOBILE_CHECKLIST.md) — Checklist for mobile app ↔ API integration, environment setup, and deployment verification.
+- [chaufher-infra](https://github.com/phoenixvc/chaufher-infra) — Bicep/Terraform IaC, CI/CD pipelines, secret management, and Azure resource provisioning.
 
 Layering:
 
