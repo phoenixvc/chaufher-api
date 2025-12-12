@@ -10,9 +10,13 @@ Document status: Final. Last updated: 2025-12-12.
 - Quick start
 - Architecture & design
 - Core flows
+- Multi-repo architecture
+- Client integration
 - System interfaces
 - Testing & observability
+- Test fixtures & seed data
 - Deployment
+- Related repositories
 - Contributing
 
 ## Overview
@@ -68,6 +72,85 @@ Principles:
 - Ride lifecycle: new → accepted → en route → in progress → completed/canceled (events propagated to clients)
 - Payments: authorization at booking, final capture on completion (adapter pattern)
 
+## Multi-repo architecture
+
+The ChaufHER platform is a coordinated multi-repository ecosystem:
+
+```
+                    chaufher-workspace (entry point, shared docs)
+                            |
+        ┌───────────────────┼───────────────────┐
+        |                   |                   |
+   chaufher-app       chaufher-web         chaufher-api
+ (Flutter mobile)     (React admin)       (.NET backend)
+        |                   |                   |
+        └───────────────────┼───────────────────┘
+                            |
+                     chaufher-infra
+                  (Azure IaC, CI/CD)
+```
+
+- **chaufher-workspace:** Monorepo coordination, shared documentation, local development setup.
+- **chaufher-api:** Core backend (this repo); provides REST APIs, SignalR hubs, business logic.
+- **chaufher-app:** Flutter mobile client (riders, drivers); consumes API.
+- **chaufher-web:** React admin portal; real-time ride oversight, incident escalation, compliance reporting.
+- **chaufher-infra:** Azure infrastructure as code (Bicep/Terraform), CI/CD pipelines, deployment automation.
+
+All repositories are version-controlled independently but designed for seamless integration via well-defined APIs and contracts.
+
+## Client integration
+
+Both `chaufher-app` and `chaufher-web` depend on stable, well-documented API contracts. This section outlines what clients expect from the backend.
+
+### Authentication & Authorization
+
+- **REST APIs:** JWT bearer token (OAuth2 / Azure AD B2C); clients pass `Authorization: Bearer {token}` header.
+- **SignalR Hubs:** Same JWT auth; clients negotiate using bearer token in query param or Authorization header.
+- **Key Vault Integration:** Signing keys, secrets, and API keys are stored in Azure Key Vault per environment; clients fetch via secure managed identity.
+
+### Expected Endpoints (clients depend on these)
+
+- `POST /api/safety-events` — trigger panic; see [docs/openapi/safety-and-ride-partial.yaml](docs/openapi/safety-and-ride-partial.yaml)
+- `GET /api/safety-events/{eventId}` — query safety event status
+- `GET /api/rides/{rideId}/status` — lightweight ride status query
+- `GET /api/rides/{rideId}` — full ride details
+- `POST /api/rides` — create a new ride request
+- `GET /api/users/{userId}` — user profile
+- `GET /api/drivers/{driverId}` — driver profile
+
+Full spec: [docs/openapi/safety-and-ride-partial.yaml](docs/openapi/safety-and-ride-partial.yaml)
+
+### Real-Time Events (SignalR)
+
+Clients subscribe to the `/hubs/rideevents` hub and listen for:
+
+- **`ride.updated`** — fired when ride state changes (accepted, en-route, completed, canceled)
+  - Payload: `{ rideId, status, driverLocation?, eta?, fare? }`
+- **`safety.event.update`** — fired when a safety event escalates or resolves
+  - Payload: `{ eventId, status, message, escalationLevel?, assignedOps? }`
+
+Full schema definitions: [docs/openapi/safety-and-ride-partial.yaml](docs/openapi/safety-and-ride-partial.yaml)
+
+### Idempotency & Retry Semantics
+
+- Clients SHOULD send `Idempotency-Key` header (UUID) on safety-event POST to deduplicate retries.
+- Server returns `409` if duplicate key matches an existing event (safe to retry).
+- Server may return `202 Accepted` for async processing; clients should poll event status.
+- For offline scenarios, clients cache events locally and retry when network resumes.
+
+### Client Checklist
+
+Before integrating with the API, ensure:
+
+- [ ] Auth tokens are obtained securely (Azure AD / OAuth2 flow).
+- [ ] JWT tokens are refreshed before expiry; rejected 401s trigger re-login.
+- [ ] All API calls include proper error handling and exponential backoff for retries.
+- [ ] SignalR connection is established and listeners for `ride.updated` and `safety.event.update` are active.
+- [ ] Panic/safety events are sent with an `Idempotency-Key`; local caching supports offline dispatch.
+- [ ] Secrets (API keys, signing keys) are fetched from Key Vault, never hardcoded.
+
+See [docs/compatibility/compatibility-checklist.md](docs/compatibility/compatibility-checklist.md) for a detailed checklist.
+
 ## System interfaces
 
 REST endpoints (examples):
@@ -97,6 +180,34 @@ Compatibility & contract docs:
 - Postman contract tests: [docs/postman/README.md](docs/postman/README.md)
 - Compatibility checklist: [docs/compatibility/compatibility-checklist.md](docs/compatibility/compatibility-checklist.md)
 
+## Test fixtures & seed data
+
+For integration testing and local development, the API provides mock data and seed scripts:
+
+**Test Data Setup:**
+
+- `scripts/seed-dev.sql` — populates dev environment with synthetic users, drivers, rides, payments.
+- `tests/fixtures/` — reusable test data payloads (JSON files for requests/responses).
+- Testcontainers.NET — ephemeral PostgreSQL for CI integration tests.
+- EF Core in-memory provider — fast unit test database.
+
+**Mock Data Patterns:**
+
+```csharp
+// Example: fixture for safety-event POST
+var safetyEventFixture = new {
+  tripId = "trip_test_001",
+  userId = "user_test_alice",
+  timestamp = DateTime.UtcNow,
+  location = new { lat = 47.6205, lon = -122.3493, accuracy = 5 },
+  deviceInfo = new { platform = "android", appVersion = "1.2.3" }
+};
+```
+
+**Integration Test Example:**
+
+Tests in `tests/Integration/` use Testcontainers to spin up a real PostgreSQL instance, seed test data, and validate API behavior end-to-end. See [tests/README.md](tests/README.md) for full setup.
+
 ## Testing & observability
 
 Testing strategy:
@@ -123,6 +234,17 @@ Recommended pipeline steps:
 5. Promote to production (canary / slot swap)
 
 Secrets: Azure Key Vault. DB: Azure Database for PostgreSQL (managed).
+
+## Related repositories
+
+ChaufHER API is part of a multi-repository workspace. Refer to the appropriate repo for integration and development guidance:
+
+- **[chaufher-workspace](https://github.com/phoenixvc/chaufher-workspace)** — Monorepo entry point, shared documentation, and local development setup. Start here.
+- **[chaufher-app](https://github.com/phoenixvc/chaufher-app)** — Flutter mobile client (iOS/Android). Consumes the API via REST and SignalR.
+- **[chaufher-web](https://github.com/phoenixvc/chaufher-web)** — React admin portal. Real-time ride oversight, incident escalation, compliance reporting.
+- **[chaufher-infra](https://github.com/phoenixvc/chaufher-infra)** — Azure infrastructure as code (Bicep/Terraform), CI/CD pipelines, and deployment automation.
+
+For cross-repo questions or coordination, start with chaufher-workspace.
 
 ## Contributing
 

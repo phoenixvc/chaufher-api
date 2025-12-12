@@ -1,9 +1,10 @@
 openapi: 3.0.3
 info:
-  title: ChaufHER API — Safety & Ride Partial
+  title: ChaufHER API — Contract Spec (Safety, Rides, Users, Drivers, SignalR)
   version: 2025-12-12
   description: |
-    Partial OpenAPI spec targeting safety event and ride state contracts used by the mobile app.
+    Partial OpenAPI spec covering safety event, ride state, user, and driver contracts.
+    Includes REST endpoints and SignalR real-time event schemas for mobile app and web integration.
 paths:
   /api/safety-events:
     post:
@@ -107,6 +108,90 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/rides/{rideId}:
+    get:
+      summary: Get full ride details
+      parameters:
+        - name: rideId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ride details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RideDetails'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/rides:
+    post:
+      summary: Create a new ride request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRideRequest'
+      responses:
+        '201':
+          description: Ride created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RideDetails'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/users/{userId}:
+    get:
+      summary: Get user profile
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/drivers/{driverId}:
+    get:
+      summary: Get driver profile and availability
+      parameters:
+        - name: driverId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Driver profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DriverProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   parameters:
     Idempotency-Key:
@@ -183,6 +268,173 @@ components:
           type: integer
           description: Suggested retry in seconds (for 202 responses)
 
+    RideDetails:
+      type: object
+      properties:
+        rideId:
+          type: string
+        riderId:
+          type: string
+        driverId:
+          type: string
+        origin:
+          type: object
+          properties:
+            lat:
+              type: number
+            lon:
+              type: number
+            address:
+              type: string
+        destination:
+          type: object
+          properties:
+            lat:
+              type: number
+            lon:
+              type: number
+            address:
+              type: string
+        status:
+          type: string
+          enum: [pending, accepted, en_route, in_progress, completed, canceled]
+        fare:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+        eta:
+          type: integer
+          description: Estimated time of arrival in seconds
+
+    CreateRideRequest:
+      type: object
+      required:
+        - riderId
+        - origin
+        - destination
+      properties:
+        riderId:
+          type: string
+        origin:
+          type: object
+          properties:
+            lat:
+              type: number
+            lon:
+              type: number
+            address:
+              type: string
+        destination:
+          type: object
+          properties:
+            lat:
+              type: number
+            lon:
+              type: number
+            address:
+              type: string
+        scheduledTime:
+          type: string
+          format: date-time
+          description: Optional scheduled ride time
+
+    UserProfile:
+      type: object
+      properties:
+        userId:
+          type: string
+        role:
+          type: string
+          enum: [rider, driver, admin]
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        profilePictureUrl:
+          type: string
+        verificationStatus:
+          type: string
+          enum: [pending, verified, rejected]
+        createdAt:
+          type: string
+          format: date-time
+
+    DriverProfile:
+      type: object
+      properties:
+        driverId:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+        rating:
+          type: number
+          format: double
+        verificationStatus:
+          type: string
+          enum: [pending, verified, rejected]
+        isAvailable:
+          type: boolean
+        currentLocation:
+          type: object
+          properties:
+            lat:
+              type: number
+            lon:
+              type: number
+        totalRidesCompleted:
+          type: integer
+
+    RideUpdatedEvent:
+      type: object
+      description: SignalR event fired when ride state changes
+      properties:
+        rideId:
+          type: string
+        status:
+          type: string
+          enum: [pending, accepted, en_route, in_progress, completed, canceled]
+        driverLocation:
+          type: object
+          properties:
+            lat:
+              type: number
+            lon:
+              type: number
+        eta:
+          type: integer
+          description: Estimated time in seconds
+        fare:
+          type: number
+        updatedAt:
+          type: string
+          format: date-time
+
+    SafetyEventUpdateEvent:
+      type: object
+      description: SignalR event fired when safety event escalates or resolves
+      properties:
+        eventId:
+          type: string
+        status:
+          type: string
+          enum: [queued, acknowledged, escalated, resolved, failed]
+        message:
+          type: string
+        escalationLevel:
+          type: integer
+          description: 0=initial, 1=ops review, 2=dispatch, 3=resolved
+        assignedOps:
+          type: string
+          description: Ops staff member assigned to the event
+        updatedAt:
+          type: string
+          format: date-time
+
     ErrorResponse:
       type: object
       properties:
@@ -249,3 +501,12 @@ components:
 #   - 200: synchronous acknowledgement (rare for safety events)
 #   - 202: accepted/queued for async processing (includes `retryAfter` optional)
 #   - Poll /api/safety-events/{eventId} for final state (acknowledged/failed)
+#
+# SignalR Real-Time Events:
+# - Hub: /hubs/rideevents (authenticated with JWT bearer token)
+# - Event: ride.updated
+#   - Fired when a ride state changes (accepted, en-route, in-progress, completed, canceled)
+#   - Schema: RideUpdatedEvent (see schemas)
+# - Event: safety.event.update
+#   - Fired when a safety event escalates or resolves
+#   - Schema: SafetyEventUpdateEvent (see schemas)
