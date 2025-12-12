@@ -1,0 +1,53 @@
+{
+  "info": {
+    "name": "ChaufHER Safety Event Contract",
+    "_postman_id": "c0a1f9d2-0000-4000-8000-000000000001",
+    "description": "Minimal collection to validate safety-event POST and status GET against the API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create Safety Event",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tripId\": \"trip_123\",\n  \"userId\": \"user_abc\",\n  \"timestamp\": \"2025-12-12T12:00:00Z\",\n  \"location\": { \"lat\": 47.6205, \"lon\": -122.3493, \"accuracy\": 5 },\n  \"deviceInfo\": { \"platform\": \"android\", \"appVersion\": \"1.2.3\" },\n  \"fallbackSms\": true\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/safety-events",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","safety-events"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Safety Event Status",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/safety-events/{{eventId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","safety-events","{{eventId}}"]
+        }
+      },
+      "response": []
+    }
+  ],
+  "event": [],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "token", "value": "" },
+    { "key": "idempotencyKey", "value": "{{randomUuid}}" },
+    { "key": "eventId", "value": "" }
+  ]
+}

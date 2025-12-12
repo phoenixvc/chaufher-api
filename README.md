@@ -1,345 +1,167 @@
-# ChaufHER API Technical Design
+# ChaufHER API — Technical Design
 
-## Product Overview
+This repository describes the `chaufher-api` service: a .NET 9 backend that provides the business logic, REST APIs, and real-time messaging for the ChaufHER platform.
 
-The **chaufher-api** service is a core backend component of the ChaufHER platform, responsible for orchestrating all interactions between the ChaufHER applications (mobile, web), real-time communications, business logic, and persistent storage. Built with .NET 9 and designed around a hexagonal architecture, the service exposes RESTful endpoints and real-time messaging (SignalR), manages rides, user accounts, driver management, payments, and notifications, and integrates closely with cloud infrastructure on Azure. Its core purpose is to provide a highly available, scalable, and secure backbone for all user and driver interactions in the ChaufHER ecosystem.
+Document status: Final. Last updated: 2025-12-12.
 
-## Purpose
+## Table of contents
 
-The primary purpose of **chaufher-api** is to centralize business logic and expose clean, well-documented APIs for the ChaufHER platform’s various clients. It solves key challenges, including:
+- Overview
+- Quick start
+- Architecture & design
+- Core flows
+- System interfaces
+- Testing & observability
+- Deployment
+- Contributing
 
-* Encapsulating domain complexity such as ride matching, pricing algorithms, and driver assignment.
+## Overview
 
-* Providing a real-time notification channel for dynamic ride states (using SignalR).
+`chaufher-api` is a stateless service (recommended) implementing a hexagonal architecture. It coordinates ride booking and lifecycle, driver state, payments, and notifications; it exposes REST endpoints and SignalR hubs for real-time updates.
 
-* Safely handling user authentication, authorization, and sensitive data.
+Goals:
 
-* Integrating with payment and notification providers securely and reliably.
+- High availability and horizontal scalability
+- Clear separation of domain logic, application orchestration, and infrastructure adapters
+- Testability via ports/adapters and automated tests
 
-* Decoupling persistent storage and external system dependencies for maintainability and scalability.
+## Quick start
 
-* Offering robust APIs as the single point of orchestration for ChaufHER mobile apps, web applications, and internal/admin operations.
+Prerequisites:
 
-**Scenarios:**
+- .NET 9 SDK
+- PostgreSQL (or Testcontainers/ephemeral DB for local runs)
 
-* A rider books a ride through the mobile app. chaufher-api matches with an available driver and manages ride state until completion.
+Common quick steps (example):
 
-* A driver receives real-time ride requests, accepts them, and their status is updated for riders accordingly.
+1. Build: `dotnet build`
+2. Run: `dotnet run --project src/Chaufher.Api`
+3. Open Swagger: `http://localhost:{port}/swagger`
 
-* Payment is processed at ride completion and receipts are sent.
+Adjust connection strings and secrets via environment variables or Azure Key Vault in production.
 
-## Target Audience
+## Architecture & design
 
-This document is intended for:
+Layering:
 
-* **Backend Engineers** developing and maintaining the chaufher-api service.
+- API Layer — controllers, SignalR hubs, health checks
+- Application Layer — use-cases, command/query orchestration
+- Domain Layer — entities, aggregates, domain services
+- Infrastructure Layer — EF Core/Postgres, external adapters (payments, notifications)
 
-* **System Architects** responsible for the overall ChaufHER system design.
+Patterns:
 
-* **DevOps Engineers** managing deployments, infrastructure, and observability.
+- Dependency Injection (built-in .NET DI)
+- CQRS where read/write separation improves scalability
+- Event-driven state transitions for ride lifecycle and notifications
 
-* **QA/Test Engineers** defining verification and validation strategies for the API surface.
+Principles:
 
-**Usage:**  
+- Keep domain pure and side-effect free
+- Isolate external integrations behind adapter interfaces
+- Prefer small, testable units and composition over monolithic services
 
-It serves as a definitive resource for understanding the system, onboarding new team members, designing integrations, planning infrastructure scaling, and implementing robust test and deployment strategies.
+## Core flows
 
-## Expected Outcomes
+- Matching: geospatial queries + scoring (proximity, availability, rating)
+- Pricing: distance/time + surge multipliers
+- Ride lifecycle: new → accepted → en route → in progress → completed/canceled (events propagated to clients)
+- Payments: authorization at booking, final capture on completion (adapter pattern)
 
-By following this technical design, we expect:
+## System interfaces
 
-* **High Reliability:** Ensured by robust error handling, health monitoring, and rollback strategies.
+REST endpoints (examples):
 
-* **Scalability:** Via stateless service design, auto-scaling on Azure, and support for horizontal database scaling.
+- `/api/rides`
+- `/api/users`
+- `/api/drivers`
+- `/api/payments`
+- `/api/notifications`
 
-* **Security:** Proper boundaries for authentication/authorization and the protection of sensitive data.
+SignalR hubs (example):
 
-* **Developer Experience:** Comprehensive documentation (OpenAPI/Swagger), logical code organization, and clear extension points.
+- `/hubs/rideevents` — authenticated hub for real-time ride updates
 
-* **Operational Transparency:** Comprehensive metrics, logs, and traces, enabling rapid issue detection and root cause analysis.
+Security:
 
-**Key Metrics:**
+- OAuth2 / JWT bearer tokens for API and hub authentication
 
-## Design Details
+Third-party integrations:
 
-**Layers & Structure:**
+- Payment gateways (PCI-compliant adapters)
+- Notification providers (push, SMS, email)
 
-* **API Layer:** Exposes REST endpoints, SignalR hubs, and admin/internal surfaces.
+Compatibility & contract docs:
 
-* **Application Layer:** Coordinates domain operations, implements use cases, and enforces business rules.
+- OpenAPI partial (safety & ride): [docs/openapi/safety-and-ride-partial.yaml](docs/openapi/safety-and-ride-partial.yaml)
+- Postman contract tests: [docs/postman/README.md](docs/postman/README.md)
+- Compatibility checklist: [docs/compatibility/compatibility-checklist.md](docs/compatibility/compatibility-checklist.md)
 
-* **Domain Layer:** Contains core logic and domain models (rides, users, drivers, payments).
+## Testing & observability
 
-* **Infrastructure Layer:** Implements persistence (EF Core/PostgreSQL), integration services (payments, notifications), and external comms (Azure services).
+Testing strategy:
 
-* **Ports/Adapters (Hexagonal):** Clear separation between primary (clients) and secondary (infrastructure) adapters; supports testability and replacement.
+- Unit: xUnit + mocking (Moq / NSubstitute)
+- Integration: Testcontainers or ephemeral PostgreSQL for EF Core tests
+- Contract/API: OpenAPI/Swagger-driven checks
+- E2E: scenarios for core user journeys
 
-**Patterns:**
+Observability:
 
-* Dependency Injection (via .NET DI)
+- Structured logging (Serilog or Microsoft.Extensions.Logging)
+- Metrics and traces (OpenTelemetry → Application Insights / Prometheus)
+- Dashboards + alerts in Azure Monitor / Grafana
 
-* CQRS for separating read/write operations
+## Deployment
 
-* Event-driven for ride state transitions and notifications
+Recommended pipeline steps:
 
-**Key Modules:**
+1. CI build + tests (GitHub Actions)
+2. Build container image (if containerized) and push to registry
+3. Deploy to staging (App Service / Container Apps / AKS)
+4. Smoke tests + health checks
+5. Promote to production (canary / slot swap)
 
-* Ride Management, User/Driver Profiles, Payment Processing, Notifications, Admin Operations
+Secrets: Azure Key Vault. DB: Azure Database for PostgreSQL (managed).
 
-## Architectural Overview
+## Contributing
 
-**Component Diagram Description:**
+- Keep domain logic in the `Domain` layer and avoid direct infra calls from it
+- Add unit tests for new business rules and integration tests for persistence or external adapters
+- Follow the existing CI checks and branch protection rules
 
-* **Clients:** ChaufHER mobile/web apps communicate over HTTPS and SignalR.
+This README was reorganized for clarity and quicker onboarding. See the repo for implementation details and the code-level docs.
 
-* **API Gateway/Load Balancer:** Directs requests to chaufher-api instances.
+## Docs & Contract Tests
 
-* **chaufher-api (App Service/Container):** .NET 9, hexagonal architecture.
+- OpenAPI partial (safety & ride): [docs/openapi/safety-and-ride-partial.yaml](docs/openapi/safety-and-ride-partial.yaml)
+- Postman contract tests and instructions: [docs/postman/README.md](docs/postman/README.md)
+- Compatibility checklist: [docs/compatibility/compatibility-checklist.md](docs/compatibility/compatibility-checklist.md)
 
-  * REST APIs (Rides, Users, Drivers, Payments, Notifications)
+Key integration notes:
 
-  * SignalR Hubs for real-time ride updates
+- Idempotency: clients SHOULD send an `Idempotency-Key` header or `idempotencyId` in the payload for safety events; server returns `409` when a duplicate key maps to an existing event.
+- Async semantics: server may respond `202 Accepted` for queued safety events; clients should poll `/api/safety-events/{eventId}` for final state.
+- SignalR events: the app listens to `/hubs/rideevents` and consumes `ride.updated` and `safety.event.update` messages (see compatibility checklist).
 
-  * EF Core Persistence to Azure PostgreSQL
+CI (Newman) example
 
-* **Integration Services:** Outbound calls to payment gateways, notification providers, and reporting tools.
+We include a sample GitHub Actions workflow to run the Postman collection against a test/staging API. Secrets expected: `TEST_BASE_URL`, `TEST_BEARER_TOKEN`.
 
-* **Other Repos:**
+Workflow path: `.github/workflows/newman.yml` (example included in repo).
 
-  * chaufher-app (mobile client), chaufher-web (web client), chaufher-infra (Terraform/Bicep/etc.), chaufher-workspace (shared tooling/scripts)
+Local run (Newman):
 
-**Architecture Principles:**
+```bash
+# install newman
+npm install -g newman
 
-* Hexagonal design enabling isolation of core business logic
+# run (replace values)
+newman run docs/postman/safety-event-collection.json --env-var "baseUrl=http://localhost:5000" --env-var "token=YOUR_JWT" --env-var "idempotencyKey=$(uuidgen)"
+```
 
-* Real-time features via SignalR
+Recommended next steps:
 
-* Cloud-native, leveraging Azure’s PaaS resources for scalability and reliability
-
-## Data Structures and Algorithms
-
-### Core Domain Models
-
-### Key Algorithms and Flows
-
-* **Matching:** Find the most suitable driver by proximity, availability, and rating. Uses geospatial queries and scoring.
-
-* **Dynamic Pricing:** Fare calculation based on distance, time, and surge multipliers.
-
-* **Status Updates:** Event-driven state machine—new, accepted, en route, in progress, completed, canceled—propagated via SignalR.
-
-* **Settlement:** Payment authorization at ride booking, with final capture/release post-ride, using external payment gateway adapters.
-
-**Justification:**
-
-* EF Core entities efficiently map aggregates for ACID operations.
-
-* Real-time features scale with SignalR and distributed state management.
-
-* Business logic isolated for testability and future extensibility.
-
-## System Interfaces
-
-* **REST Endpoints:**
-
-  * `/api/rides`
-
-  * `/api/users`
-
-  * `/api/drivers`
-
-  * `/api/payments`
-
-  * `/api/notifications`
-
-  * Protected with OAuth2/JWT bearer authentication.
-
-* **SignalR Hubs:**
-
-  * `/hubs/rideevents`: authenticated connection, push ride status/activity
-
-* **Third-party Integrations:**
-
-  * Payment Processor SDKs/API (PCI compliant, HTTPS)
-
-  * Notification Services (Push, SMS, Email)
-
-  * Reporting (Telemetry/Event Hub as needed)
-
-* **Internal Interfaces:**
-
-  * Admin/ops endpoints (restricted access)
-
-  * Shared messaging/events via Azure Service Bus or similar as needed
-
-**Standards:** OpenAPI v3, OAuth2, REST, JSON, HTTPS, WebSocket (SignalR)
-
-## User Interfaces
-
-While **chaufher-api** exposes no end-user UI, developer-facing interfaces include:
-
-* **Swagger/OpenAPI UI:** At `/swagger` for interactive documentation, test calls, and schema discovery.
-
-* **Admin/Ops Endpoints:** Secure endpoints for operational health, feature flags, and incident diagnosis.
-
-This approach supports rapid developer onboarding, robust API discoverability, and operational transparency.
-
-## Hardware Interfaces
-
-* **Azure App Service or Azure Container Apps:** For stateless microservice deployment.
-
-* **Azure Database for PostgreSQL:** Provides reliable, scalable persistent storage.
-
-* **Azure SignalR Service (optional):** For scaling real-time connections beyond a single node.
-
-* **Load Balancer:** Azure Front Door or Application Gateway for high availability.
-
-* **Networking:** VNETs, subnets, NSGs as per Azure best practices.
-
-**Assumptions:**
-
-* All components reside in the same region to minimize latency.
-
-* Sufficient autoscaling and instance count provisioned per anticipated workload.
-
-## Testing Plan
-
-The plan guarantees code quality, correctness, and system stability:
-
-* **Unit Testing:** Domain logic, validation, algorithm correctness.
-
-* **Integration Testing:** Persistence (PostgreSQL), Service endpoints, Payment/Notification adapters.
-
-* **Contract Testing:** API boundary verification and backward compatibility checks.
-
-* **Performance Testing:** Load and stress testing, SignalR connection density.
-
-* **End-to-End Testing:** Simulate critical business workflows.
-
-## Test Strategies
-
-* **Domain testing:** fakes/mocks for core services and domain logic.
-
-* **Persistence:** Use in-memory (SQLite) and ephemeral PostgreSQL for CI/integration.
-
-* **API:** Automated test suite using tools like xUnit, FluentAssertions, and REST clients.
-
-* **SignalR:** Test harness for message delivery, client connectivity, and scale.
-
-* **Edge Cases:** Simulate failures (network partitions, db failover, third-party API errors).
-
-## Testing Tools
-
-* **Unit Testing:** xUnit, NUnit
-
-* **Mocking:** Moq, NSubstitute
-
-* **Integration:** Testcontainers.NET (for ephemeral DB), EF Core’s in-memory provider
-
-* **API/Contract:** Swagger/OpenAPI linter, Postman, REST-assured
-
-* **E2E:** SpecFlow, Selenium (for admin surfaces), custom test runners
-
-* **CI/CD:** GitHub Actions, Azure Pipelines with automated test orchestration
-
-## Testing Environments
-
-* Automated promotion from dev → staging → prod gated by passing tests and approvals.
-
-## Test Cases
-
-## Reporting and Metrics
-
-* **Metrics:** Inbound request rate, latency, error rate, SignalR message delivery stats
-
-* **Logs:** Structured, context-rich via Serilog or Microsoft.Extensions.Logging
-
-* **Tracing:** Distributed tracing (OpenTelemetry) for request correlation
-
-* **Dashboards:** Azure Monitor, Application Insights, custom Grafana dashboards
-
-* **Alerting:** Real-time alerts for service degradation, error spikes, or infra faults
-
-All metrics and logs are exported to central monitoring tools for team visibility and operational response.
-
-## Deployment Plan
-
-The chaufher-api is shipped via an automated pipeline, leveraging IaC and containerized deployments.
-
-### Deployment Environment
-
-* **Azure App Service/Container Apps:** Autoscaling, rolling deployment, zero downtime upgrades.
-
-* **Azure Database for PostgreSQL:** Managed DB with high availability.
-
-* **Networking:** Secured by private endpoints or appropriate firewall rules.
-
-* **Secrets Management:** Azure Key Vault or environment-based secrets.
-
-* **Disaster Recovery:** Automated backups and geo-redundancy for DB.
-
-### Deployment Tools
-
-* **CI/CD Pipelines:** GitHub Actions, Azure Pipelines
-
-* **IaC:** chaufher-infra (Terraform/Bicep scripts)
-
-* **Container Registry:** Azure Container Registry or GitHub Container Registry
-
-* **chaufher-workspace:** Shared scripts for build/deploy/test steps
-
-### Deployment Steps
-
-1. **Code Commit:** Trigger CI pipeline, build, run automated tests.
-
-2. **Build:** Containerize application if needed; push to registry.
-
-3. **Infra Provision:** chaufher-infra provisions/updates necessary resources.
-
-4. **Deploy:** Rolling deployment to App Service or Container App (staging slot first).
-
-5. **Smoke Tests:** Automated checks against staging, rollback if failures detected.
-
-6. **Production Promotion:** Slot swap/go-live after validation.
-
-**Rollback:** Automatic revert to previous deployment if metrics/health checks fail.
-
-## Post-Deployment Verification
-
-* **Smoke Tests:** Automated API and SignalR connectivity runs.
-
-* **Health Checks:** Verify `/healthz` endpoint, DB/EK connectivity, SignalR hub liveness.
-
-* **Log/Metric Review:** No error spikes or abnormal patterns.
-
-* **Manual Sanity:** (as needed) critical API operations via Swagger UI.
-
-## Continuous Deployment
-
-**Approach:**
-
-* Implemented via branch protection, automated tests with required pass rates.
-
-* Canary/blue-green deployments for incremental production rollout.
-
-* Feature flags for progressive exposure of new features.
-
-**Safeguards:**
-
-* Rollback triggers if any defined SLOs are breached post-release.
-
-* Alerting, monitoring, and human-in-the-loop escalation for critical paths.
-
-**Benefits:**
-
-* Reduced release friction and time-to-market.
-
-* Rapid feedback on feature and fix success.
-
-* Improved service quality and developer confidence.
-
-**Requirements:**
-
-* Mature test automation and high integration test reliability.
-
-* Comprehensive observability and fast rollback mechanisms.
+- Expand the OpenAPI partial to include SignalR event schemas and more examples.
+- Add negative/idempotency tests to the Postman collection and run them in CI.
+- Convert the Postman contract to a Pact or contract-testing framework if you want stronger consumer-driven testing.

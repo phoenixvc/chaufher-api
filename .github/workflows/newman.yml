@@ -1,0 +1,28 @@
+name: Newman Contract Tests
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  newman:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install newman
+        run: npm install -g newman
+
+      - name: Run Postman/Newman collection
+        env:
+          BASE_URL: ${{ secrets.TEST_BASE_URL }}
+          TOKEN: ${{ secrets.TEST_BEARER_TOKEN }}
+        run: |
+          ID=$(node -e "console.log(require('crypto').randomUUID())")
+          newman run docs/postman/safety-event-collection.json --env-var "baseUrl=${BASE_URL}" --env-var "token=${TOKEN}" --env-var "idempotencyKey=${ID}"

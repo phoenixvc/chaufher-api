@@ -1,0 +1,251 @@
+openapi: 3.0.3
+info:
+  title: ChaufHER API — Safety & Ride Partial
+  version: 2025-12-12
+  description: |
+    Partial OpenAPI spec targeting safety event and ride state contracts used by the mobile app.
+paths:
+  /api/safety-events:
+    post:
+      summary: Trigger a safety event (panic)
+      description: |
+        Mobile clients POST a safety event. The API accepts an idempotency key to ensure
+        safe retries. The server may accept the event immediately (200), queue it (202)
+        for async processing, or return a conflict/validation error. Clients should
+        follow the status returned and poll `/api/safety-events/{eventId}` for final state.
+      operationId: createSafetyEvent
+      parameters:
+        - $ref: '#/components/parameters/Idempotency-Key'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SafetyEventRequest'
+      responses:
+        '200':
+          description: Event acknowledged synchronously
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafetyEventResponse'
+        '202':
+          description: Event accepted and queued for async processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafetyEventResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Duplicate event detected (idempotent)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/safety-events/{eventId}:
+    get:
+      summary: Get safety event status
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current event status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafetyEventResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/rides/{rideId}/status:
+    get:
+      summary: Get ride status (lightweight)
+      parameters:
+        - name: rideId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ride status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rideId:
+                    type: string
+                  status:
+                    type: string
+                    example: en_route
+                  updatedAt:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    Idempotency-Key:
+      name: Idempotency-Key
+      in: header
+      description: Client-generated idempotency key to deduplicate retries (UUID recommended)
+      required: false
+      schema:
+        type: string
+
+  schemas:
+    SafetyEventRequest:
+      type: object
+      required:
+        - tripId
+        - userId
+        - timestamp
+        - location
+      properties:
+        idempotencyId:
+          type: string
+          description: Optional client idempotency identifier (also supported via header).
+        tripId:
+          type: string
+          description: Server-assigned trip identifier (if active trip)
+        userId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        location:
+          type: object
+          properties:
+            lat:
+              type: number
+            lon:
+              type: number
+            accuracy:
+              type: number
+        deviceInfo:
+          type: object
+          properties:
+            platform:
+              type: string
+            appVersion:
+              type: string
+        fallbackSms:
+          type: boolean
+          description: Whether SMS fallback is allowed (user opt-in)
+        contacts:
+          type: array
+          items:
+            type: string
+          description: Optional emergency contact numbers
+
+    SafetyEventResponse:
+      type: object
+      properties:
+        eventId:
+          type: string
+        status:
+          type: string
+          enum:
+            - queued
+            - acknowledged
+            - failed
+            - duplicate
+        message:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        retryAfter:
+          type: integer
+          description: Suggested retry in seconds (for 202 responses)
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required or invalid token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimit:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+# Notes:
+# - Clients SHOULD send an `Idempotency-Key` header or `idempotencyId` in the payload
+#   to enable safe retries. The server will return 409 with the existing event when
+#   a duplicate idempotency key is detected.
+# - Server responses:
+#   - 200: synchronous acknowledgement (rare for safety events)
+#   - 202: accepted/queued for async processing (includes `retryAfter` optional)
+#   - Poll /api/safety-events/{eventId} for final state (acknowledged/failed)
