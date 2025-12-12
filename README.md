@@ -6,18 +6,23 @@ Document status: Final. Last updated: 2025-12-12.
 
 ## Table of contents
 
-- Overview
-- Quick start
-- Architecture & design
-- Core flows
-- Multi-repo architecture
-- Client integration
-- System interfaces
-- Testing & observability
-- Test fixtures & seed data
-- Deployment
-- Related repositories
-- Contributing
+- [Overview](#overview)
+- [Quick start](#quick-start)
+- [Architecture & design](#architecture--design)
+- [Core flows](#core-flows)
+- [Multi-repo architecture](#multi-repo-architecture)
+- [Client integration](#client-integration)
+- [System interfaces](#system-interfaces)
+- [Testing & observability](#testing--observability)
+- [Test fixtures & seed data](#test-fixtures--seed-data)
+- [Deployment](#deployment)
+- [Related repositories](#related-repositories)
+- [Backward compatibility & versioning](#backward-compatibility--versioning)
+- [Development guidelines](#development-guidelines)
+- [Security guidelines](#security-guidelines)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+- [Contributing](#contributing)
 
 ## Overview
 
@@ -43,6 +48,47 @@ Common quick steps (example):
 3. Open Swagger: `http://localhost:{port}/swagger`
 
 Adjust connection strings and secrets via environment variables or Azure Key Vault in production.
+
+**Environment Variables Reference:**
+
+Required:
+
+- `ASPNETCORE_ENVIRONMENT` — `Development`, `Staging`, `Production`
+- `ConnectionStrings__DefaultConnection` — PostgreSQL connection string
+- `AzureKeyVault__VaultUrl` — Azure Key Vault endpoint
+- `Auth__JwtSigningKey` — Secret key for JWT signing (fetch from Key Vault in prod)
+- `SignalR__ConnectionString` — Azure SignalR Service endpoint (if using managed service)
+
+Optional:
+
+- `ASPNETCORE_URLS` — Server URL (default: `http://localhost:5000`)
+- `Logging__LogLevel` — Min log level (`Debug`, `Information`, `Warning`, `Error`)
+- `ApplicationInsights__InstrumentationKey` — Azure App Insights key for telemetry
+
+Full list: see `.env.example` in the repo.
+
+**IDE Configuration:**
+
+VS Code:
+
+1. Install extensions: C#, REST Client, Azure Tools
+2. Open workspace: `code .`
+3. Create `.vscode/launch.json` for debugging (template in repo)
+4. Use `F5` to debug
+
+Visual Studio:
+
+1. Open `chaufher-api.sln`
+2. Right-click solution → Manage Secrets (stores env vars locally)
+3. F5 to debug
+
+**API Documentation:**
+
+Swagger/OpenAPI specs available at:
+
+- Dev: `http://localhost:5000/swagger`
+- Staging: `https://api-staging.chaufher.azure.com/swagger`
+- Production: `https://api.chaufher.azure.com/swagger`
 
 ## Architecture & design
 
@@ -165,6 +211,11 @@ SignalR hubs (example):
 
 - `/hubs/rideevents` — authenticated hub for real-time ride updates
 
+Health & readiness probes (Kubernetes/Azure):
+
+- `GET /healthz` — liveness probe (is the API alive?)
+- `GET /ready` — readiness probe (can it handle traffic?)
+
 Security:
 
 - OAuth2 / JWT bearer tokens for API and hub authentication
@@ -173,6 +224,56 @@ Third-party integrations:
 
 - Payment gateways (PCI-compliant adapters)
 - Notification providers (push, SMS, email)
+
+### Error Handling & Response Conventions
+
+All error responses follow this standard format:
+
+```json
+{
+  "code": "INVALID_REQUEST",
+  "message": "Human-readable error message",
+  "details": { "field": "error details" },
+  "traceId": "correlation-id-for-logs"
+}
+```
+
+HTTP Status Codes:
+
+- `200 OK` — Success
+- `201 Created` — Resource created
+- `202 Accepted` — Request accepted, async processing (check `retryAfter`)
+- `400 Bad Request` — Validation error
+- `401 Unauthorized` — Missing or invalid auth token
+- `403 Forbidden` — Authenticated but not authorized
+- `404 Not Found` — Resource doesn't exist
+- `409 Conflict` — Duplicate (e.g., idempotency key match)
+- `429 Too Many Requests` — Rate limit exceeded
+- `500 Internal Server Error` — Server fault
+
+### Logging Conventions
+
+Structured logging via Serilog or Microsoft.Extensions.Logging:
+
+```csharp
+logger.LogInformation(
+  "Ride created: {RideId}, Rider: {RiderId}, Correlation: {CorrelationId}",
+  rideId, riderId, correlationId
+);
+```
+
+All logs include:
+
+- Timestamp (ISO 8601 UTC)
+- Log Level (Information, Warning, Error, Critical)
+- Correlation ID (trace across app/infra layers)
+- Structured properties (JSON serialized)
+
+Logs are exported to:
+
+- Azure Log Analytics (central aggregation)
+- Application Insights (performance + errors)
+- Local console (dev)
 
 Compatibility & contract docs:
 
@@ -245,6 +346,185 @@ ChaufHER API is part of a multi-repository workspace. Refer to the appropriate r
 - **[chaufher-infra](https://github.com/phoenixvc/chaufher-infra)** — Azure infrastructure as code (Bicep/Terraform), CI/CD pipelines, and deployment automation.
 
 For cross-repo questions or coordination, start with chaufher-workspace.
+
+## Backward Compatibility & Versioning
+
+**API Versioning:**
+
+- Current: v1 (stable, no breaking changes without notice)
+- Versioning: Semantic versioning (MAJOR.MINOR.PATCH)
+- Breaking changes: Require new major version (v2, v3, etc.)
+
+**Deprecation Policy:**
+
+- Deprecated endpoints/fields are marked with `Deprecated: true` in OpenAPI.
+- Minimum 3 months notice before removal (published in release notes).
+- Example: field removed in v2.0.0 → deprecated in v1.2.0 (released 3+ months prior).
+
+**Migration Guide:**
+
+When upgrading API versions:
+
+1. Check [CHANGELOG.md](CHANGELOG.md) for breaking changes.
+2. Update client endpoints (e.g., `/api/v2/rides` if applicable).
+3. Test in staging before production.
+4. See related repos (chaufher-app, chaufher-web) for client-side migrations.
+
+## Development Guidelines
+
+### Naming Conventions
+
+- **Endpoints:** kebab-case with resource nouns: `/api/safety-events`, `/api/rides/{rideId}/status`
+- **Controllers:** PascalCase, plural resource name: `RidesController`, `SafetyEventsController`
+- **Methods:** PascalCase: `CreateRide()`, `GetSafetyEventStatus()`
+- **Variables:** camelCase: `rideId`, `driverLocation`
+- **Constants:** UPPER_SNAKE_CASE: `MAX_RETRY_ATTEMPTS`, `DEFAULT_TIMEOUT_MS`
+- **Database columns:** snake_case: `ride_id`, `created_at`
+
+### Commit Conventions
+
+Use conventional commits:
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `style`
+
+Examples:
+
+```
+feat(safety): add panic event escalation to ops
+fix(auth): resolve JWT token refresh race condition
+docs(api): update OpenAPI partial with new endpoints
+```
+
+### Git Workflow
+
+**Branching Strategy:**
+
+- `main` — production-ready
+- `feature/your-feature` — features
+- `fix/issue-description` — bugfixes
+- `chore/task` — non-code changes
+
+**Pull Request Flow:**
+
+1. Create feature branch from `main`
+2. Push and open PR with description
+3. All checks must pass (tests, linters, code review)
+4. Squash and merge on approval
+5. Delete branch after merge
+
+### Code Quality Standards
+
+- **Linting:** `dotnet format` (enforced in CI)
+- **Analyzers:** StyleCop, SonarAnalyzer (strict mode)
+- **Test Coverage:** Minimum 80% for critical business logic
+- **Complexity:** McCabe complexity < 10 per method
+- **Async:** Prefer async/await for I/O-bound operations
+
+## Security Guidelines
+
+**Secrets Management:**
+
+- Never commit secrets to git (keys, tokens, passwords)
+- Store all secrets in Azure Key Vault per environment
+- Use managed identities for service-to-service auth
+- Rotate credentials every 90 days (automated)
+
+**What NOT to commit:**
+
+- `.env` files with sensitive values
+- API keys, JWT signing keys
+- Database passwords
+- Private certificates
+
+**Code Patterns:**
+
+- Use parameterized queries to prevent SQL injection
+- Validate and sanitize all user inputs
+- Use HTTPS/TLS for all external comms
+- Apply OWASP Top 10 mitigations
+- Log security events (auth failures, rate limits, admin actions)
+- Never log passwords, tokens, or PII
+
+## Troubleshooting
+
+**Common Setup Issues**
+
+*Port 5000 already in use*
+
+```bash
+# Find process
+lsof -i :5000
+
+# Kill or use different port
+dotnet run --urls "http://localhost:5001"
+```
+
+*PostgreSQL connection fails*
+
+```bash
+# Verify connection string format
+# Should be: Server=localhost;Database=chaufher_dev;User Id=postgres;Password=...;
+
+# Test connection
+psql -h localhost -U postgres -d chaufher_dev
+```
+
+*EF Core migration fails*
+
+```bash
+# Ensure DB exists and is accessible
+dotnet ef database update
+
+# If stuck, reset (dev only!)
+dotnet ef database drop --force
+dotnet ef database update
+```
+
+*SignalR connection timeout*
+
+```bash
+# Check Azure SignalR Service is running (staging/prod)
+# Dev: ensure /hubs/rideevents endpoint is registered
+# Client: verify correct hub URL and auth token
+```
+
+*Tests fail locally but pass in CI*
+
+```bash
+# Clear build artifacts
+rm -rf bin obj
+dotnet clean
+dotnet build
+dotnet test
+
+# Check env vars match CI
+echo $ASPNETCORE_ENVIRONMENT
+```
+
+**Getting Help**
+
+- **Documentation:** See [chaufher-workspace](https://github.com/phoenixvc/chaufher-workspace) for cross-repo docs
+- **Issues:** Open a GitHub issue with:
+  - Error message and stack trace
+  - Steps to reproduce
+  - Environment (OS, .NET version)
+  - Attempted fixes
+- **Slack:** #engineering-backend (for quick questions)
+- **Escalation:** Contact the platform lead for critical blockers
+
+## License
+
+[Add License Here — e.g., MIT, Apache 2.0, or proprietary]
+
+Copyright (c) 2025 ChaufHER. All rights reserved.
 
 ## Contributing
 
